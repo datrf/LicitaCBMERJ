@@ -1,6 +1,15 @@
 
 import { Processo, ItemProcesso, StatusProcesso, Modalidade, UnidadeDemandante, IrpCabecalho, IrpItem, SituacaoIRP, AtaSrp, ItemAta, Contrato, SituacaoContrato, MovimentoConsumo, TipoOrigem, TipoCodigo, ClassificacaoProcesso } from './types';
 
+// Helper Function for Status Colors
+export const getStatusColor = (status: StatusProcesso) => {
+  const statusStr = String(status);
+  if (statusStr.includes('APONTAM') || statusStr.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
+  if (statusStr.includes('CONTRATO') || statusStr.includes('ATA') || statusStr.includes('CONCLUÍDO') || statusStr.includes('ENTREGUE') || statusStr.includes('HOMOLOGACAO') || statusStr.includes('HOMOLOGAÇÃO')) return 'bg-green-100 text-green-700 border-green-200';
+  if (statusStr.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+  return 'bg-blue-100 text-blue-700 border-blue-200';
+};
+
 // Mock Data updated to reflect new Enums and Schema for Phase 3
 export const MOCK_PROCESSOS: Processo[] = [
   {
