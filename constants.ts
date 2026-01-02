@@ -3,7 +3,7 @@ import { Processo, ItemProcesso, StatusProcesso, Modalidade, UnidadeDemandante, 
 
 // Helper Function for Status Colors
 export const getStatusColor = (status: StatusProcesso) => {
-  const statusStr = String(status);
+  const statusStr = String(status || '');
   if (statusStr.includes('APONTAM') || statusStr.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
   if (statusStr.includes('CONTRATO') || statusStr.includes('ATA') || statusStr.includes('CONCLUÍDO') || statusStr.includes('ENTREGUE') || statusStr.includes('HOMOLOGACAO') || statusStr.includes('HOMOLOGAÇÃO')) return 'bg-green-100 text-green-700 border-green-200';
   if (statusStr.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
