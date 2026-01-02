@@ -3,6 +3,15 @@ import React, { useState, useMemo, useRef } from 'react';
 import { LISTS } from '../constants';
 import { StatusProcesso, Processo, ItemProcesso, Modalidade, UnidadeDemandante, TipoCodigo, ClassificacaoProcesso, Contrato, SituacaoContrato, AtaSrp, ItemAta, IrpItem, IrpCabecalho } from '../types';
 
+// Helper definido fora do componente para evitar ReferenceError e garantir acesso global no módulo
+const getStatusColor = (status: StatusProcesso) => {
+  const statusStr = String(status);
+  if (statusStr.includes('APONTAM') || statusStr.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
+  if (statusStr.includes('CONTRATO') || statusStr.includes('ATA') || statusStr.includes('CONCLUÍDO') || statusStr.includes('ENTREGUE') || statusStr.includes('HOMOLOGACAO') || statusStr.includes('HOMOLOGAÇÃO')) return 'bg-green-100 text-green-700 border-green-200';
+  if (statusStr.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+  return 'bg-blue-100 text-blue-700 border-blue-200';
+};
+
 interface BiddingModuleProps {
     processes: Processo[];
     onUpdateProcesses: (processes: Processo[]) => void;
@@ -716,14 +725,6 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
 
       setIsEditItemModalOpen(false);
       setEditingItemData(null);
-  };
-
-  const getStatusColor = (status: StatusProcesso) => {
-    const statusStr = String(status);
-    if (statusStr.includes('APONTAM') || statusStr.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
-    if (statusStr.includes('CONTRATO') || statusStr.includes('ATA') || statusStr.includes('CONCLUÍDO') || statusStr.includes('ENTREGUE') || statusStr.includes('HOMOLOGACAO') || statusStr.includes('HOMOLOGAÇÃO')) return 'bg-green-100 text-green-700 border-green-200';
-    if (statusStr.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
-    return 'bg-blue-100 text-blue-700 border-blue-200';
   };
 
   const isSRP = newProcessData.modalidade === Modalidade.PREGAO_SRP || newProcessData.modalidade === Modalidade.ADESAO_ARP;
