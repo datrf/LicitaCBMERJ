@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { LISTS } from '../constants';
 import { StatusProcesso, Processo, ItemProcesso, Modalidade, UnidadeDemandante, TipoCodigo, ClassificacaoProcesso, Contrato, SituacaoContrato, AtaSrp, ItemAta, IrpItem, IrpCabecalho } from '../types';
 
@@ -43,6 +43,11 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
   const [homologationValues, setHomologationValues] = useState<Record<string, number>>({});
 
   const [irpImportSelection, setIrpImportSelection] = useState<Record<string, { selected: boolean; quantity: number }>>({});
+
+  // Import States
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ processes: Processo[], items: ItemProcesso[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
       isOpen: boolean;
@@ -195,6 +200,110 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
       return null;
   };
 
+  // --- IMPORT / EXPORT FUNCTIONS ---
+
+  const handleDownloadModel = () => {
+      const headers = [
+          "NUMERO_SEI", "OBJETO_PROCESSO", "MODALIDADE", "CLASSIFICACAO", "STATUS", "DATA_INICIO (AAAA-MM-DD)", "SETOR_REQUISITANTE",
+          "CODIGO_ITEM", "TIPO_CODIGO", "DESCRICAO_ITEM", "QUANTIDADE", "VALOR_UNITARIO_EST"
+      ];
+      const exampleRow = [
+          "SEI-240001/000999/2024", "Aquisição de Material de Limpeza", "Pregão Eletrônico", "ADMINISTRATIVO", "1 DOD", "2024-01-15", "DGAL",
+          "12345", "CATMAT (Material)", "Sabão em pó 500g", "100", "5.50"
+      ];
+      const csvContent = "data:text/csv;charset=utf-8," + 
+          headers.join(";") + "\n" + 
+          exampleRow.join(";");
+      
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "modelo_importacao_processos.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+          const text = evt.target?.result as string;
+          processCSV(text);
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+  };
+
+  const processCSV = (csvText: string) => {
+      const lines = csvText.split('\n');
+      const newProcessesMap = new Map<string, Processo>();
+      const newItems: ItemProcesso[] = [];
+
+      for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
+          const cols = line.split(';');
+          if (cols.length < 5) continue; 
+
+          const numeroSei = cols[0]?.trim();
+          if (!numeroSei) continue;
+
+          if (!newProcessesMap.has(numeroSei)) {
+              const procId = `proc-imp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+              newProcessesMap.set(numeroSei, {
+                  id: procId,
+                  numeroProcessoSei: numeroSei,
+                  objeto: cols[1]?.trim() || 'Objeto Importado',
+                  modalidade: (cols[2]?.trim() as Modalidade) || Modalidade.PREGAO_ELETRONICO,
+                  classificacao: (cols[3]?.trim() as ClassificacaoProcesso) || ClassificacaoProcesso.ADMINISTRATIVO,
+                  status: (cols[4]?.trim() as StatusProcesso) || StatusProcesso.DOD,
+                  dataInicio: cols[5]?.trim() || new Date().toISOString(),
+                  dataUltimaMovimentacao: new Date().toISOString(),
+                  setorRequisitante: (cols[6]?.trim() as UnidadeDemandante) || UnidadeDemandante.DGAL,
+                  ano: new Date().getFullYear(),
+                  anoPlanejamento: new Date().getFullYear(),
+                  processosRelacionados: [],
+                  qtdParticipantesExternos: 0
+              });
+          }
+
+          const currentProc = newProcessesMap.get(numeroSei)!;
+
+          if (cols[7]?.trim()) {
+              newItems.push({
+                  id: `item-proc-imp-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+                  processoSeiId: currentProc.id,
+                  numeroItem: newItems.filter(it => it.processoSeiId === currentProc.id).length + 1,
+                  codigoItem: cols[7]?.trim(),
+                  tipoCodigo: (cols[8]?.trim() as TipoCodigo) || TipoCodigo.CATMAT,
+                  descricao: cols[9]?.trim() || 'Item sem descrição',
+                  quantidadeEstimada: parseFloat(cols[10]?.replace(',', '.') || '0'),
+                  valorUnitarioEstimado: parseFloat(cols[11]?.replace(',', '.') || '0')
+              });
+          }
+      }
+
+      setImportPreview({
+          processes: Array.from(newProcessesMap.values()),
+          items: newItems
+      });
+      setIsImportModalOpen(true);
+  };
+
+  const confirmImport = () => {
+      if (importPreview) {
+          onUpdateProcesses([...importPreview.processes, ...processes]);
+          setAllProcessItems([...allProcessItems, ...importPreview.items]);
+          setImportPreview(null);
+          setIsImportModalOpen(false);
+          alert('Importação de Processos realizada com sucesso!');
+      }
+  };
+
   const handleSelectAllAvailableItems = (isChecked: boolean) => {
       if (!editingProcessData) return;
       const processItems = allProcessItems.filter(i => i.processoSeiId === editingProcessData.id);
@@ -206,13 +315,6 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
           }
       });
       setAtaGenData({ ...ataGenData, selectedItems: newSelection });
-  };
-
-  const getStatusColor = (status: StatusProcesso) => {
-     if (status.includes('APONTAM') || status.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
-     if (status.includes('CONTRATO') || status.includes('ATA') || status.includes('CONCLUÍDO') || status.includes('ENTREGUE')) return 'bg-green-100 text-green-700 border-green-200';
-     if (status.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
-     return 'bg-blue-100 text-blue-700 border-blue-200';
   };
 
   const handleIrpChange = (irpId: string) => {
@@ -244,6 +346,7 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
   };
 
   const handleArchiveProcess = (e: React.MouseEvent, proc: Processo) => {
+      e.preventDefault();
       e.stopPropagation();
       setArchiveConfirmation({ isOpen: true, process: proc });
   };
@@ -259,10 +362,12 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
   };
 
   const handleRequestDeleteProcess = (e: React.MouseEvent, proc: Processo) => {
+      e.preventDefault();
       e.stopPropagation();
       setDeleteConfirmation({ isOpen: true, type: 'PROCESS', id: proc.id, title: `Processo ${proc.numeroProcessoSei}` });
   };
   const handleRequestDeleteItem = (e: React.MouseEvent, item: ItemProcesso) => {
+      e.preventDefault();
       e.stopPropagation();
       setDeleteConfirmation({ isOpen: true, type: 'ITEM', id: item.id, title: `Item ${item.codigoItem}` });
   };
@@ -613,6 +718,14 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
       setEditingItemData(null);
   };
 
+  const getStatusColor = (status: StatusProcesso) => {
+    const statusStr = String(status);
+    if (statusStr.includes('APONTAM') || statusStr.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
+    if (statusStr.includes('CONTRATO') || statusStr.includes('ATA') || statusStr.includes('CONCLUÍDO') || statusStr.includes('ENTREGUE') || statusStr.includes('HOMOLOGACAO') || statusStr.includes('HOMOLOGAÇÃO')) return 'bg-green-100 text-green-700 border-green-200';
+    if (statusStr.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+    return 'bg-blue-100 text-blue-700 border-blue-200';
+  };
+
   const isSRP = newProcessData.modalidade === Modalidade.PREGAO_SRP || newProcessData.modalidade === Modalidade.ADESAO_ARP;
 
   return (
@@ -625,6 +738,28 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                 <span className="text-[10px] font-normal text-slate-500 ml-2 bg-slate-200 px-2 py-0.5 rounded-full">{filteredAndSortedProcesses.length} registros</span>
             </h3>
             <div className="flex gap-2 items-center">
+                <button 
+                    onClick={handleDownloadModel} 
+                    className="text-slate-500 hover:text-blue-600 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-lg flex items-center gap-2 transition-all hover:bg-blue-50 border border-transparent hover:border-blue-100"
+                    title="Baixar Modelo de Planilha CSV"
+                >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    Modelo
+                </button>
+                <button 
+                    onClick={() => fileInputRef.current?.click()} 
+                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm"
+                >
+                    <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    Importar Planilha
+                </button>
+                <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileUpload} 
+                    accept=".csv" 
+                    className="hidden" 
+                />
                 <button className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] uppercase font-black tracking-widest px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm" onClick={handleOpenNewProcessModal}>
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                   Novo Processo
@@ -633,10 +768,10 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
         </div>
         <div className="px-4 py-3 bg-white border-b border-slate-100 flex flex-col md:flex-row gap-3 items-center justify-between">
             <div className="relative w-full md:w-1/3">
-                <input type="text" placeholder="Buscar por Nº SEI ou Objeto..." className="pl-3 pr-3 py-1.5 w-full text-xs border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none font-semibold" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                <input type="text" placeholder="Buscar por Nº SEI ou Objeto..." className="pl-3 pr-3 py-1.5 w-full text-xs border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none font-semibold bg-white text-slate-700" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             </div>
             <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-                <select className="px-3 py-1.5 text-xs border border-slate-300 rounded-md font-bold text-slate-600" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                <select className="px-3 py-1.5 text-xs border border-slate-300 rounded-md font-bold text-slate-600 bg-white" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                     <option value="">Status: Todos</option>
                     {LISTS.STATUS_PROCESSO.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
@@ -666,7 +801,7 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                                 <td className="px-6 py-4"><span className={`px-2 py-1 rounded-full text-[9px] font-black border uppercase tracking-widest ${getStatusColor(proc.status)}`}>{proc.status}</span></td>
                                 <td className="px-6 py-4 text-center"><span className={`px-2 py-0.5 rounded text-[10px] font-black font-mono shadow-sm ${idleDays > 30 ? 'bg-red-600 text-white animate-pulse' : 'bg-slate-800 text-white'}`}>{idleDays} d</span></td>
                                 <td className="px-6 py-4 text-center">
-                                    <div className="flex justify-center gap-2">
+                                    <div className="relative z-10 flex justify-center gap-2">
                                         <button onClick={(e) => handleArchiveProcess(e, proc)} className="p-2 text-amber-600 bg-amber-50 border border-amber-100 rounded-xl hover:bg-amber-600 hover:text-white transition-all shadow-sm active:scale-90" title="Arquivar">
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
                                         </button>
@@ -690,6 +825,54 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
             </table>
         </div>
       </div>
+
+      {/* IMPORT CONFIRMATION MODAL */}
+      {isImportModalOpen && importPreview && (
+          <div className="fixed inset-0 bg-slate-900/70 z-[80] flex items-center justify-center backdrop-blur-sm animate-fade-in">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100">
+                  <div className="bg-slate-50 p-6 border-b border-slate-200">
+                      <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                          <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          Confirmar Importação de Processos
+                      </h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                          <p className="text-sm text-blue-800 font-semibold mb-2">Resumo da Leitura do Arquivo:</p>
+                          <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                              <li><strong className="text-slate-800">{importPreview.processes.length}</strong> Novos Processos identificados.</li>
+                              <li><strong className="text-slate-800">{importPreview.items.length}</strong> Itens totais vinculados.</li>
+                          </ul>
+                      </div>
+                      <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-lg">
+                          <table className="w-full text-xs text-left">
+                              <thead className="bg-slate-50 font-bold text-slate-500">
+                                  <tr><th className="px-3 py-2">Nº SEI</th><th className="px-3 py-2">Objeto</th></tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                  {importPreview.processes.map(proc => (
+                                      <tr key={proc.id}>
+                                          <td className="px-3 py-2 font-mono text-slate-700">{proc.numeroProcessoSei}</td>
+                                          <td className="px-3 py-2 text-slate-600 truncate max-w-[200px]">{proc.objeto}</td>
+                                      </tr>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
+                      <div className="text-xs text-slate-400 italic text-center mt-2">
+                          * Certifique-se que o arquivo segue o modelo padrão (separado por ponto e vírgula).
+                      </div>
+                  </div>
+                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-between gap-3">
+                      <button onClick={handleDownloadModel} className="text-blue-600 text-xs font-bold hover:underline">Baixar Modelo Novamente</button>
+                      <div className="flex gap-2">
+                          <button onClick={() => { setIsImportModalOpen(false); setImportPreview(null); }} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">Cancelar</button>
+                          <button onClick={confirmImport} className="px-4 py-2 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm">Confirmar Importação</button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {selectedProcessId && selectedProcess && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col animate-slide-up h-96 flex-shrink-0">
@@ -808,7 +991,7 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                                     <input 
                                         type="number" 
                                         step="0.01"
-                                        className="w-full pl-10 pr-4 py-3 border-2 border-slate-100 rounded-xl font-mono font-black text-green-700 bg-slate-50 focus:ring-4 focus:ring-green-100 focus:border-green-500 outline-none transition-all text-right"
+                                        className="w-full pl-10 pr-4 py-3 border-2 border-slate-100 rounded-xl font-mono font-black text-green-700 bg-white focus:ring-4 focus:ring-green-100 focus:border-green-500 outline-none transition-all text-right"
                                         value={homologationValues[item.id] || 0}
                                         onChange={e => setHomologationValues({ ...homologationValues, [item.id]: Number(e.target.value) })}
                                     />
@@ -851,16 +1034,16 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Tipo de Código</label>
-                             <select className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-shadow bg-slate-50" value={editingItemData.tipoCodigo} onChange={(e) => setEditingItemData({...editingItemData, tipoCodigo: e.target.value as TipoCodigo})}>{LISTS.TIPOS_CODIGO.map((tipo) => (<option key={tipo} value={tipo}>{tipo}</option>))}</select>
+                             <select className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-shadow bg-white text-slate-700" value={editingItemData.tipoCodigo} onChange={(e) => setEditingItemData({...editingItemData, tipoCodigo: e.target.value as TipoCodigo})}>{LISTS.TIPOS_CODIGO.map((tipo) => (<option key={tipo} value={tipo}>{tipo}</option>))}</select>
                         </div>
                         <div>
                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Código Identificador</label>
-                             <input type="text" required className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-sm" value={editingItemData.codigoItem} onChange={(e) => setEditingItemData({...editingItemData, codigoItem: e.target.value})} />
+                             <input type="text" required className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-sm bg-white text-slate-700" value={editingItemData.codigoItem} onChange={(e) => setEditingItemData({...editingItemData, codigoItem: e.target.value})} />
                         </div>
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Descrição Detalhada do Objeto</label>
-                        <textarea className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none h-24 text-sm leading-relaxed" value={editingItemData.descricao} onChange={(e) => setEditingItemData({...editingItemData, descricao: e.target.value})} required />
+                        <textarea className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none h-24 text-sm leading-relaxed bg-white text-slate-700" value={editingItemData.descricao} onChange={(e) => setEditingItemData({...editingItemData, descricao: e.target.value})} required />
                     </div>
                     
                     {/* ÁREA DE VALORES MELHORADA */}
@@ -871,7 +1054,7 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                                 type="number" 
                                 required 
                                 min="1" 
-                                className="w-full px-3 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 outline-none font-black text-slate-700 text-lg text-center shadow-sm" 
+                                className="w-full px-3 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 outline-none font-black text-slate-700 text-lg text-center shadow-sm bg-white" 
                                 value={editingItemData.quantidadeEstimada} 
                                 onChange={(e) => setEditingItemData({...editingItemData, quantidadeEstimada: Number(e.target.value)})} 
                              />
@@ -940,16 +1123,16 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Tipo de Código</label>
-                             <select className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none transition-shadow bg-slate-50" value={newItemData.tipoCodigo} onChange={(e) => setNewItemData({...newItemData, tipoCodigo: e.target.value as TipoCodigo})}>{LISTS.TIPOS_CODIGO.map((tipo) => (<option key={tipo} value={tipo}>{tipo}</option>))}</select>
+                             <select className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none transition-shadow bg-white text-slate-700" value={newItemData.tipoCodigo} onChange={(e) => setNewItemData({...newItemData, tipoCodigo: e.target.value as TipoCodigo})}>{LISTS.TIPOS_CODIGO.map((tipo) => (<option key={tipo} value={tipo}>{tipo}</option>))}</select>
                         </div>
                         <div>
                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Código Identificador</label>
-                             <input type="text" required className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none font-mono text-sm" value={newItemData.codigoItem} onChange={(e) => setNewItemData({...newItemData, codigoItem: e.target.value})} placeholder="Ex: 45021" />
+                             <input type="text" required className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none font-mono text-sm bg-white text-slate-700" value={newItemData.codigoItem} onChange={(e) => setNewItemData({...newItemData, codigoItem: e.target.value})} placeholder="Ex: 45021" />
                         </div>
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Descrição Detalhada do Objeto</label>
-                        <textarea className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none resize-none h-24 text-sm leading-relaxed" value={newItemData.descricao} onChange={(e) => setNewItemData({...newItemData, descricao: e.target.value})} required placeholder="Descrição completa..." />
+                        <textarea className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none resize-none h-24 text-sm leading-relaxed bg-white text-slate-700" value={newItemData.descricao} onChange={(e) => setNewItemData({...newItemData, descricao: e.target.value})} required placeholder="Descrição completa..." />
                     </div>
 
                     {/* VALORES NOVO ITEM */}
@@ -960,7 +1143,7 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                                 type="number" 
                                 required 
                                 min="1" 
-                                className="w-full px-3 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-green-100 outline-none font-black text-slate-700 text-lg text-center" 
+                                className="w-full px-3 py-3 border border-slate-200 rounded-xl focus:ring-4 focus:ring-green-100 outline-none font-black text-slate-700 text-lg text-center bg-white" 
                                 value={newItemData.quantidadeEstimada} 
                                 onChange={(e) => setNewItemData({...newItemData, quantidadeEstimada: Number(e.target.value)})} 
                              />
@@ -1010,15 +1193,15 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
       )}
 
       {isContractGenModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"><div className="bg-green-50 p-6 border-b border-green-100"><h3 className="text-lg font-bold text-green-900">Gerar Contrato (Vincular)</h3></div><div className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><input type="text" placeholder="Nº Contrato" className="border rounded px-3 py-2" value={contractGenData.numeroContrato} onChange={e => setContractGenData({...contractGenData, numeroContrato: e.target.value})} /><input type="text" placeholder="Fornecedor" className="border rounded px-3 py-2" value={contractGenData.fornecedor} onChange={e => setContractGenData({...contractGenData, fornecedor: e.target.value})} /></div><div className="grid grid-cols-2 gap-4"><input type="date" className="border rounded px-3 py-2" value={contractGenData.dataInicio} onChange={e => setContractGenData({...contractGenData, dataInicio: e.target.value})} /><input type="date" className="border rounded px-3 py-2" value={contractGenData.dataFim} onChange={e => setContractGenData({...contractGenData, dataFim: e.target.value})} /></div><div className="max-h-40 overflow-y-auto border rounded"><table className="w-full text-sm"><thead className="bg-slate-100"><tr><th className="p-2 text-left">Item</th><th className="p-2">Incluir</th></tr></thead><tbody>{allProcessItems.filter(i => editingProcessData && i.processoSeiId === editingProcessData.id).map(item => (<tr key={item.id}><td className="p-2">{item.descricao}</td><td className="p-2 text-center"><input type="checkbox" checked={contractGenData.selectedItems[item.id] || false} onChange={e => setContractGenData({...contractGenData, selectedItems: {...contractGenData.selectedItems, [item.id]: e.target.checked}})} /></td></tr>))}</tbody></table></div><div className="flex justify-end gap-3 pt-4"><button onClick={() => setIsContractGenModalOpen(false)} className="text-slate-600">Cancelar</button><button onClick={handleGenerateContract} className="bg-green-600 text-white px-4 py-2 rounded">Gerar Contrato</button></div></div></div></div>
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"><div className="bg-green-50 p-6 border-b border-green-100"><h3 className="text-lg font-bold text-green-900">Gerar Contrato (Vincular)</h3></div><div className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><input type="text" placeholder="Nº Contrato" className="border rounded px-3 py-2 bg-white text-slate-700" value={contractGenData.numeroContrato} onChange={e => setContractGenData({...contractGenData, numeroContrato: e.target.value})} /><input type="text" placeholder="Fornecedor" className="border rounded px-3 py-2 bg-white text-slate-700" value={contractGenData.fornecedor} onChange={e => setContractGenData({...contractGenData, fornecedor: e.target.value})} /></div><div className="grid grid-cols-2 gap-4"><input type="date" className="border rounded px-3 py-2 bg-white text-slate-700" value={contractGenData.dataInicio} onChange={e => setContractGenData({...contractGenData, dataInicio: e.target.value})} /><input type="date" className="border rounded px-3 py-2 bg-white text-slate-700" value={contractGenData.dataFim} onChange={e => setContractGenData({...contractGenData, dataFim: e.target.value})} /></div><div className="max-h-40 overflow-y-auto border rounded"><table className="w-full text-sm"><thead className="bg-slate-100"><tr><th className="p-2 text-left">Item</th><th className="p-2">Incluir</th></tr></thead><tbody>{allProcessItems.filter(i => editingProcessData && i.processoSeiId === editingProcessData.id).map(item => (<tr key={item.id}><td className="p-2">{item.descricao}</td><td className="p-2 text-center"><input type="checkbox" checked={contractGenData.selectedItems[item.id] || false} onChange={e => setContractGenData({...contractGenData, selectedItems: {...contractGenData.selectedItems, [item.id]: e.target.checked}})} /></td></tr>))}</tbody></table></div><div className="flex justify-end gap-3 pt-4"><button onClick={() => setIsContractGenModalOpen(false)} className="text-slate-600">Cancelar</button><button onClick={handleGenerateContract} className="bg-green-600 text-white px-4 py-2 rounded">Gerar Contrato</button></div></div></div></div>
       )}
 
       {isAtaQuantityModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm text-center"><h3 className="text-lg font-bold text-slate-800 mb-4">Geração de Atas SRP</h3><p className="text-slate-600 text-sm mb-4">Quantas Atas distintas deseja gerar para este processo?</p><input type="number" min="1" max="10" className="w-20 text-center border rounded px-3 py-2 text-lg font-bold mx-auto block mb-6" value={ataQuantityToGenerate} onChange={(e) => setAtaQuantityToGenerate(Number(e.target.value))} /><button onClick={startAtaGenerationLoop} className="w-full bg-blue-600 text-white font-bold py-2 rounded-lg">Iniciar Assistente</button></div></div>
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm text-center"><h3 className="text-lg font-bold text-slate-800 mb-4">Geração de Atas SRP</h3><p className="text-slate-600 text-sm mb-4">Quantas Atas distintas deseja gerar para este processo?</p><input type="number" min="1" max="10" className="w-20 text-center border rounded px-3 py-2 text-lg font-bold mx-auto block mb-6 bg-white text-slate-700" value={ataQuantityToGenerate} onChange={(e) => setAtaQuantityToGenerate(Number(e.target.value))} /><button onClick={startAtaGenerationLoop} className="w-full bg-blue-600 text-white font-bold py-2 rounded-lg">Iniciar Assistente</button></div></div>
       )}
 
       {isAtaGenModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"><div className="bg-blue-50 p-6 border-b border-blue-100 flex justify-between"><h3 className="text-lg font-bold text-blue-900">{editingAtaId ? 'Editar Ata' : `Gerar Ata ${currentAtaIndex} de ${ataQuantityToGenerate}`}</h3></div><div className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><input type="text" placeholder="Nº Ata (ex: 010/2024)" className="border rounded px-3 py-2" value={ataGenData.numeroAta} onChange={e => setAtaGenData({...ataGenData, numeroAta: e.target.value})} /><input type="text" placeholder="Fornecedor" className="border rounded px-3 py-2" value={ataGenData.fornecedor} onChange={e => setAtaGenData({...ataGenData, fornecedor: e.target.value})} /></div><div className="grid grid-cols-2 gap-4"><input type="date" className="border rounded px-3 py-2" value={ataGenData.dataAssinatura} onChange={e => setAtaGenData({...ataGenData, dataAssinatura: e.target.value})} /><input type="date" className="border rounded px-3 py-2" value={ataGenData.dataVencimento} onChange={e => setAtaGenData({...ataGenData, dataVencimento: e.target.value})} /></div><div className="max-h-48 overflow-y-auto border rounded"><table className="w-full text-sm"><thead className="bg-slate-100"><tr><th className="p-2 text-left">Item</th><th className="p-2 w-20 text-center"><input type="checkbox" onChange={(e) => handleSelectAllAvailableItems(e.target.checked)} /></th></tr></thead><tbody>{allProcessItems.filter(i => editingProcessData && i.processoSeiId === editingProcessData.id).map(item => { const existingAta = getExistingAtaForItem(editingProcessData!.id, item.codigoItem, editingAtaId); const isSelf = editingAtaId && getExistingAtaForItem(editingProcessData!.id, item.codigoItem, null) === ataGenData.numeroAta; const disabled = !!existingAta && !isSelf; return (<tr key={item.id} className={disabled ? 'opacity-50 bg-slate-50' : ''}><td className="p-2"><div className="font-medium">{item.descricao}</div>{disabled && <span className="text-xs text-red-500">Já na Ata {existingAta}</span>}</td><td className="p-2 text-center"><input type="checkbox" disabled={disabled} checked={ataGenData.selectedItems[item.id] || false} onChange={e => setAtaGenData({...ataGenData, selectedItems: {...ataGenData.selectedItems, [item.id]: e.target.checked}})} /></td></tr>); })}</tbody></table></div><div className="flex justify-end gap-3 pt-4"><button onClick={() => setIsAtaGenModalOpen(false)} className="text-slate-600">Cancelar</button><div className="flex gap-2">{!editingAtaId && currentAtaIndex < ataQuantityToGenerate && (<button onClick={() => handleSaveAta(true)} className="px-4 py-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50">Salvar e Encerrar</button>)}<button onClick={() => handleSaveAta(false)} className="bg-blue-600 text-white px-4 py-2 rounded shadow-sm">{currentAtaIndex < ataQuantityToGenerate && !editingAtaId ? 'Salvar e Próxima' : 'Salvar Ata'}</button></div></div></div></div></div>
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"><div className="bg-blue-50 p-6 border-b border-blue-100 flex justify-between"><h3 className="text-lg font-bold text-blue-900">{editingAtaId ? 'Editar Ata' : `Gerar Ata ${currentAtaIndex} de ${ataQuantityToGenerate}`}</h3></div><div className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><input type="text" placeholder="Nº Ata (ex: 010/2024)" className="border rounded px-3 py-2 bg-white text-slate-700" value={ataGenData.numeroAta} onChange={e => setAtaGenData({...ataGenData, numeroAta: e.target.value})} /><input type="text" placeholder="Fornecedor" className="border rounded px-3 py-2 bg-white text-slate-700" value={ataGenData.fornecedor} onChange={e => setAtaGenData({...ataGenData, fornecedor: e.target.value})} /></div><div className="grid grid-cols-2 gap-4"><input type="date" className="border rounded px-3 py-2 bg-white text-slate-700" value={ataGenData.dataAssinatura} onChange={e => setAtaGenData({...ataGenData, dataAssinatura: e.target.value})} /><input type="date" className="border rounded px-3 py-2 bg-white text-slate-700" value={ataGenData.dataVencimento} onChange={e => setAtaGenData({...ataGenData, dataVencimento: e.target.value})} /></div><div className="max-h-48 overflow-y-auto border rounded"><table className="w-full text-sm"><thead className="bg-slate-100"><tr><th className="p-2 text-left">Item</th><th className="p-2 w-20 text-center"><input type="checkbox" onChange={(e) => handleSelectAllAvailableItems(e.target.checked)} /></th></tr></thead><tbody>{allProcessItems.filter(i => editingProcessData && i.processoSeiId === editingProcessData.id).map(item => { const existingAta = getExistingAtaForItem(editingProcessData!.id, item.codigoItem, editingAtaId); const isSelf = editingAtaId && getExistingAtaForItem(editingProcessData!.id, item.codigoItem, null) === ataGenData.numeroAta; const disabled = !!existingAta && !isSelf; return (<tr key={item.id} className={disabled ? 'opacity-50 bg-slate-50' : ''}><td className="p-2"><div className="font-medium">{item.descricao}</div>{disabled && <span className="text-xs text-red-500">Já na Ata {existingAta}</span>}</td><td className="p-2 text-center"><input type="checkbox" disabled={disabled} checked={ataGenData.selectedItems[item.id] || false} onChange={e => setAtaGenData({...ataGenData, selectedItems: {...ataGenData.selectedItems, [item.id]: e.target.checked}})} /></td></tr>); })}</tbody></table></div><div className="flex justify-end gap-3 pt-4"><button onClick={() => setIsAtaGenModalOpen(false)} className="text-slate-600">Cancelar</button><div className="flex gap-2">{!editingAtaId && currentAtaIndex < ataQuantityToGenerate && (<button onClick={() => handleSaveAta(true)} className="px-4 py-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50">Salvar e Encerrar</button>)}<button onClick={() => handleSaveAta(false)} className="bg-blue-600 text-white px-4 py-2 rounded shadow-sm">{currentAtaIndex < ataQuantityToGenerate && !editingAtaId ? 'Salvar e Próxima' : 'Salvar Ata'}</button></div></div></div></div></div>
       )}
 
       {archiveConfirmation.isOpen && archiveConfirmation.process && (
@@ -1043,22 +1226,22 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
                     {editMode === 'INFO' && (
                         <>
                             <div className="grid grid-cols-2 gap-4">
-                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº Processo SEI</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={editingProcessData.numeroProcessoSei} onChange={(e) => setEditingProcessData({...editingProcessData, numeroProcessoSei: e.target.value})} /></div>
-                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Data Início</label><input type="date" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={editingProcessData.dataInicio.split('T')[0]} onChange={(e) => setEditingProcessData({...editingProcessData, dataInicio: e.target.value})} /></div>
+                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº Processo SEI</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={editingProcessData.numeroProcessoSei} onChange={(e) => setEditingProcessData({...editingProcessData, numeroProcessoSei: e.target.value})} /></div>
+                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Data Início</label><input type="date" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={editingProcessData.dataInicio.split('T')[0]} onChange={(e) => setEditingProcessData({...editingProcessData, dataInicio: e.target.value})} /></div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
-                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Modalidade</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={editingProcessData.modalidade} onChange={(e) => setEditingProcessData({...editingProcessData, modalidade: e.target.value as Modalidade})}>{LISTS.MODALIDADES.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
-                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Classificação</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={editingProcessData.classificacao} onChange={(e) => setEditingProcessData({...editingProcessData, classificacao: e.target.value as ClassificacaoProcesso})}>{LISTS.CLASSIFICACOES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Modalidade</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={editingProcessData.modalidade} onChange={(e) => setEditingProcessData({...editingProcessData, modalidade: e.target.value as Modalidade})}>{LISTS.MODALIDADES.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+                                <div><label className="block text-sm font-semibold text-slate-700 mb-1">Classificação</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={editingProcessData.classificacao} onChange={(e) => setEditingProcessData({...editingProcessData, classificacao: e.target.value as ClassificacaoProcesso})}>{LISTS.CLASSIFICACOES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
                             </div>
                             <div><label className="block text-sm font-semibold text-indigo-700 mb-1">Ano de Planejamento (LOA)</label><input type="number" className="w-32 px-3 py-2 border border-indigo-200 bg-indigo-50 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-bold text-indigo-800" value={editingProcessData.anoPlanejamento} onChange={(e) => setEditingProcessData({...editingProcessData, anoPlanejamento: Number(e.target.value)})} /></div>
-                            <div><label className="block text-sm font-semibold text-slate-700 mb-1">Setor Requisitante</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={editingProcessData.setorRequisitante} onChange={(e) => setEditingProcessData({...editingProcessData, setorRequisitante: e.target.value as UnidadeDemandante})}>{LISTS.UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}</select></div>
-                            <div><label className="block text-sm font-semibold text-slate-700 mb-1">Objeto</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-20" value={editingProcessData.objeto} onChange={(e) => setEditingProcessData({...editingProcessData, objeto: e.target.value})} /></div>
+                            <div><label className="block text-sm font-semibold text-slate-700 mb-1">Setor Requisitante</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={editingProcessData.setorRequisitante} onChange={(e) => setEditingProcessData({...editingProcessData, setorRequisitante: e.target.value as UnidadeDemandante})}>{LISTS.UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}</select></div>
+                            <div><label className="block text-sm font-semibold text-slate-700 mb-1">Objeto</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-20 bg-white text-slate-700" value={editingProcessData.objeto} onChange={(e) => setEditingProcessData({...editingProcessData, objeto: e.target.value})} /></div>
                         </>
                     )}
                     {editMode === 'FLOW' && (
                         <>
                             <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-200"><label className="block text-sm font-bold text-indigo-800 mb-1">Status / Fase Atual</label><select className="w-full px-3 py-2 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium text-slate-700" value={editingProcessData.status} onChange={(e) => setEditingProcessData({...editingProcessData, status: e.target.value as StatusProcesso})}>{LISTS.STATUS_PROCESSO.map((status) => (<option key={status} value={status}>{status}</option>))}</select><p className="text-xs text-indigo-600 mt-2">* Alterar para <strong>HOMOLOGAÇÃO</strong>, <strong>ATA R P</strong> ou <strong>CONTRATO</strong> iniciará o assistente de geração/valores.</p></div>
-                            <div><label className="block text-sm font-semibold text-slate-700 mb-1">Última Movimentação</label><div className="flex gap-2"><input type="date" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={editingProcessData.dataUltimaMovimentacao ? editingProcessData.dataUltimaMovimentacao.split('T')[0] : ''} onChange={(e) => setEditingProcessData({...editingProcessData, dataUltimaMovimentacao: e.target.value + 'T12:00:00'})} /><button type="button" onClick={handleSetToday} className="px-3 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg text-xs font-bold transition-colors flex items-center gap-1" title="Definir como Hoje">Hoje</button></div></div>
+                            <div><label className="block text-sm font-semibold text-slate-700 mb-1">Última Movimentação</label><div className="flex gap-2"><input type="date" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={editingProcessData.dataUltimaMovimentacao ? editingProcessData.dataUltimaMovimentacao.split('T')[0] : ''} onChange={(e) => setEditingProcessData({...editingProcessData, dataUltimaMovimentacao: e.target.value + 'T12:00:00'})} /><button type="button" onClick={handleSetToday} className="px-3 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg text-xs font-bold transition-colors flex items-center gap-1" title="Definir como Hoje">Hoje</button></div></div>
                         </>
                     )}
                     <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 mt-2"><button type="button" onClick={() => setIsEditProcessModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg">Cancelar</button><button type="submit" className={`px-4 py-2 text-sm font-medium text-white rounded-lg shadow-sm ${editMode === 'FLOW' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700'}`}>{editMode === 'FLOW' ? 'Salvar Movimentação' : 'Salvar Dados'}</button></div>
@@ -1069,6 +1252,85 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
 
       {isDateConfirmOpen && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center backdrop-blur-sm animate-fade-in"><div className="bg-white rounded-lg shadow-2xl max-w-md w-full p-6 transform transition-all scale-100"><h3 className="text-lg font-bold text-slate-800 mb-4">Confirmar Data</h3><p className="text-slate-600 mb-6">Deseja atualizar a data da última movimentação para hoje?</p><div className="flex justify-end gap-3"><button onClick={() => setIsDateConfirmOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">Cancelar</button><button onClick={confirmSetToday} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm">Sim, Hoje</button></div></div></div>
+      )}
+
+      {isNewProcessModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm animate-fade-in">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden transform transition-all scale-100 max-h-[90vh] overflow-y-auto">
+                <div className="bg-slate-50 p-6 border-b border-slate-200 flex justify-between items-center sticky top-0 z-10">
+                    <h3 className="text-lg font-bold text-slate-800">Novo Processo Licitatório</h3>
+                    <button onClick={() => setIsNewProcessModalOpen(false)} className="text-slate-400 hover:text-slate-600"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+                </div>
+                <form onSubmit={handleSaveProcess} className="p-6 space-y-4">
+                    {/* IRP Import Section */}
+                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                        <label className="block text-sm font-bold text-blue-800 mb-2">Importar de IRP (Planejamento)</label>
+                        <select className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newProcessData.origemIrpId} onChange={(e) => handleIrpChange(e.target.value)}>
+                            <option value="">Sem vínculo com IRP (Processo Avulso)</option>
+                            {irps.filter(i => !i.arquivado).map(irp => (
+                                <option key={irp.id} value={irp.id}>IRP {irp.numeroIrp} - {irp.objeto}</option>
+                            ))}
+                        </select>
+                        {newProcessData.origemIrpId && (
+                            <div className="mt-3 bg-white p-3 rounded border border-blue-200 max-h-40 overflow-y-auto">
+                                <p className="text-xs font-bold text-slate-500 mb-2">Selecione os itens para importar:</p>
+                                {irpItems.filter(i => i.irpId === newProcessData.origemIrpId).map(item => (
+                                    <div key={item.id} className="flex items-center justify-between text-sm py-1 border-b border-slate-50 last:border-0">
+                                        <div className="flex items-center gap-2">
+                                            <input type="checkbox" checked={irpImportSelection[item.id]?.selected || false} onChange={() => handleToggleIrpItem(item.id)} />
+                                            <span className="truncate max-w-[200px]" title={item.descricao}>{item.codigoItem} - {item.descricao}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-xs text-slate-400">Qtd:</span>
+                                            <input type="number" className="w-16 px-1 py-0.5 border rounded text-right" value={irpImportSelection[item.id]?.quantity || item.quantidade} onChange={(e) => handleChangeIrpItemQty(item.id, Number(e.target.value))} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº Processo SEI</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" placeholder="Gerado automaticamente se vazio" value={newProcessData.numeroProcessoSei} onChange={(e) => setNewProcessData({...newProcessData, numeroProcessoSei: e.target.value})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº Pregão / Edital</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" placeholder="Ex: PE 010/2024" value={newProcessData.numeroPregao} onChange={(e) => setNewProcessData({...newProcessData, numeroPregao: e.target.value})} /></div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Modalidade</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newProcessData.modalidade} onChange={(e) => setNewProcessData({...newProcessData, modalidade: e.target.value as Modalidade})}>{LISTS.MODALIDADES.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Classificação</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newProcessData.classificacao} onChange={(e) => setNewProcessData({...newProcessData, classificacao: e.target.value as ClassificacaoProcesso})}>{LISTS.CLASSIFICACOES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Ano LOA</label><input type="number" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newProcessData.anoPlanejamento} onChange={(e) => setNewProcessData({...newProcessData, anoPlanejamento: Number(e.target.value)})} /></div>
+                        <div className="col-span-2"><label className="block text-sm font-semibold text-slate-700 mb-1">Setor Requisitante</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newProcessData.setorRequisitante} onChange={(e) => setNewProcessData({...newProcessData, setorRequisitante: e.target.value as UnidadeDemandante})}>{LISTS.UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}</select></div>
+                    </div>
+
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Objeto</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-20 bg-white text-slate-700" placeholder="Descrição resumida do objeto da licitação..." value={newProcessData.objeto} onChange={(e) => setNewProcessData({...newProcessData, objeto: e.target.value})} /></div>
+
+                    {/* Related Processes */}
+                    <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-1">Processos Relacionados</label>
+                        <div className="flex gap-2 mb-2">
+                            <input type="text" className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-slate-700 text-sm" placeholder="Adicionar SEI..." value={tempRelatedProcess} onChange={(e) => setTempRelatedProcess(e.target.value)} />
+                            <button type="button" onClick={(e) => handleAddRelatedProcess(e, 'CREATE')} className="px-3 py-2 bg-slate-200 hover:bg-slate-300 rounded-lg text-slate-600 font-bold">+</button>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {newProcessData.processosRelacionados?.map((proc, idx) => (
+                                <span key={idx} className="bg-slate-100 border border-slate-200 text-xs px-2 py-1 rounded flex items-center gap-1">
+                                    {proc}
+                                    <button type="button" onClick={() => handleRemoveRelatedProcess(idx, 'CREATE')} className="text-red-500 hover:text-red-700 font-bold">×</button>
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
+                        <button type="button" onClick={() => setIsNewProcessModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">Cancelar</button>
+                        <button type="submit" className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm">Criar Processo</button>
+                    </div>
+                </form>
+            </div>
+        </div>
       )}
 
     </div>

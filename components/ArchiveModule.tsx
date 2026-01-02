@@ -38,7 +38,6 @@ export const ArchiveModule: React.FC<ArchiveModuleProps> = ({
   const [activeTab, setActiveTab] = useState<'processes' | 'irps' | 'atas' | 'contratos' | 'consumptions'>('processes');
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
   
-  // --- ESTADOS DE FILTROS POR COLUNA ---
   const [filterId, setFilterId] = useState('');
   const [filterClass, setFilterClass] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -47,7 +46,6 @@ export const ArchiveModule: React.FC<ArchiveModuleProps> = ({
   const [detailsModal, setDetailsModal] = useState<{ isOpen: boolean; type: ArchiveType; data: any }>({ isOpen: false, type: 'PROCESS', data: null });
   const [restoreConfirmation, setRestoreConfirmation] = useState<{ isOpen: boolean; type: ArchiveType; data: any }>({ isOpen: false, type: 'PROCESS', data: null });
 
-  // --- HELPERS DE DADOS ---
   const availableYears = useMemo(() => {
     const years = new Set<number>();
     processes.forEach(p => p.anoPlanejamento && years.add(p.anoPlanejamento));
@@ -71,7 +69,6 @@ export const ArchiveModule: React.FC<ArchiveModuleProps> = ({
       return processes.find(p => p.id === procId)?.classificacao || "ADMINISTRATIVO";
   };
 
-  // --- LÓGICA DE FILTRAGEM UNIFICADA ---
   const applyFilters = (data: any[], idField: string, objField: string, statusField: string, classProvider: (item: any) => string, yearProvider: (item: any) => number) => {
       return data.filter(item => {
           const matchesYear = selectedYear === 'all' || yearProvider(item) === selectedYear;
@@ -164,10 +161,10 @@ export const ArchiveModule: React.FC<ArchiveModuleProps> = ({
                         </tr>
                         {/* LINHA DE FILTROS POR COLUNA */}
                         <tr className="bg-slate-100/50">
-                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Nº..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none" value={filterId} onChange={e => setFilterId(e.target.value)} /></td>
-                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Classe..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none" value={filterClass} onChange={e => setFilterClass(e.target.value)} /></td>
-                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Objeto..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none" value={filterObjeto} onChange={e => setFilterObjeto(e.target.value)} /></td>
-                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Status..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none" value={filterStatus} onChange={e => setFilterStatus(e.target.value)} /></td>
+                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Nº..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-700" value={filterId} onChange={e => setFilterId(e.target.value)} /></td>
+                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Classe..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-700" value={filterClass} onChange={e => setFilterClass(e.target.value)} /></td>
+                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Objeto..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-700" value={filterObjeto} onChange={e => setFilterObjeto(e.target.value)} /></td>
+                            <td className="px-4 py-2"><input type="text" placeholder="Filtrar Status..." className="w-full px-2 py-1 text-[10px] border rounded focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-700" value={filterStatus} onChange={e => setFilterStatus(e.target.value)} /></td>
                             <td className="px-4 py-2"></td>
                             <td className="px-4 py-2 text-center"><button onClick={() => {setFilterId(''); setFilterClass(''); setFilterStatus(''); setFilterObjeto('');}} className="text-[8px] font-black text-indigo-600 hover:underline">LIMPAR</button></td>
                         </tr>
@@ -213,7 +210,6 @@ export const ArchiveModule: React.FC<ArchiveModuleProps> = ({
             </div>
         </div>
 
-        {/* MODAL DETALHES */}
         {detailsModal.isOpen && (
             <div className="fixed inset-0 bg-slate-900/70 z-[130] flex items-center justify-center backdrop-blur-md p-4 animate-fade-in">
                 <div className="bg-white rounded-[2.5rem] shadow-2xl transition-all duration-500 overflow-hidden flex flex-col border border-white/20 max-w-2xl w-full">
@@ -229,7 +225,6 @@ export const ArchiveModule: React.FC<ArchiveModuleProps> = ({
             </div>
         )}
 
-        {/* MODAL RESTAURAÇÃO */}
         {restoreConfirmation.isOpen && (
             <div className="fixed inset-0 bg-slate-900/80 z-[140] flex items-center justify-center backdrop-blur-xl p-4 animate-fade-in">
                 <div className="bg-white rounded-[3rem] p-10 max-w-sm w-full text-center shadow-2xl border-b-[12px] border-indigo-600">

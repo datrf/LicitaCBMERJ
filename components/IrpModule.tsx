@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { LISTS } from '../constants';
 import { IrpCabecalho, IrpItem, SituacaoIRP, TipoCodigo } from '../types';
 
@@ -26,6 +26,11 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [pendingRedirectToItems, setPendingRedirectToItems] = useState(false);
   const [tempOutroProcesso, setTempOutroProcesso] = useState('');
+
+  // Import States
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ irps: IrpCabecalho[], items: IrpItem[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
       isOpen: boolean;
@@ -85,6 +90,113 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
           ? <svg className="w-3 h-3 ml-1 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
           : <svg className="w-3 h-3 ml-1 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
   };
+
+  // --- IMPORT / EXPORT FUNCTIONS ---
+
+  const handleDownloadModel = () => {
+      const headers = [
+          "NUMERO_IRP", "OBJETO_IRP", "ORIGEM", "ORGAO_GERENCIADOR", "SITUACAO", "DATA_ABERTURA (AAAA-MM-DD)", "DATA_LIMITE (AAAA-MM-DD)", 
+          "CODIGO_ITEM", "TIPO_CODIGO", "DESCRICAO_ITEM", "UNIDADE", "QUANTIDADE", "VALOR_UNITARIO"
+      ];
+      const exampleRow = [
+          "05/2024", "Aquisição de Material de Escritório", "UASG 925000", "CBMERJ/DGAL", "Em elaboração", "2024-06-01", "2024-06-30",
+          "45021", "CATMAT (Material)", "Caneta Esferográfica Azul", "CX", "100", "25.50"
+      ];
+      const csvContent = "data:text/csv;charset=utf-8," + 
+          headers.join(";") + "\n" + 
+          exampleRow.join(";");
+      
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "modelo_importacao_irp.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+          const text = evt.target?.result as string;
+          processCSV(text);
+      };
+      reader.readAsText(file);
+      // Reset input
+      e.target.value = '';
+  };
+
+  const processCSV = (csvText: string) => {
+      const lines = csvText.split('\n');
+      const newIrpsMap = new Map<string, IrpCabecalho>();
+      const newItems: IrpItem[] = [];
+
+      // Skip header (index 0)
+      for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
+          const cols = line.split(';'); // Expecting semi-colon for Excel CSV compatibility
+          if (cols.length < 13) continue;
+
+          const numeroIrp = cols[0]?.trim();
+          if (!numeroIrp) continue;
+
+          // Create or Get IRP
+          if (!newIrpsMap.has(numeroIrp)) {
+              const irpId = `irp-imp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+              newIrpsMap.set(numeroIrp, {
+                  id: irpId,
+                  numeroIrp: numeroIrp,
+                  objeto: cols[1]?.trim() || 'Objeto Importado',
+                  origem: cols[2]?.trim() || 'Desconhecida',
+                  orgaoGerenciador: cols[3]?.trim() || 'Não informado',
+                  situacao: (cols[4]?.trim() as SituacaoIRP) || SituacaoIRP.EM_ELABORACAO,
+                  dataAbertura: cols[5]?.trim() || new Date().toISOString(),
+                  dataLimite: cols[6]?.trim() || new Date().toISOString(),
+                  numeroProcessoSei: '',
+                  arquivado: false
+              });
+          }
+
+          const currentIrp = newIrpsMap.get(numeroIrp)!;
+
+          // Create Item
+          if (cols[7]?.trim()) {
+              newItems.push({
+                  id: `item-imp-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+                  irpId: currentIrp.id,
+                  codigoItem: cols[7]?.trim(),
+                  tipoCodigo: (cols[8]?.trim() as TipoCodigo) || TipoCodigo.CATMAT,
+                  descricao: cols[9]?.trim() || 'Item sem descrição',
+                  unidade: cols[10]?.trim() || 'UN',
+                  quantidade: parseFloat(cols[11]?.replace(',', '.') || '0'),
+                  valorUnitario: parseFloat(cols[12]?.replace(',', '.') || '0')
+              });
+          }
+      }
+
+      setImportPreview({
+          irps: Array.from(newIrpsMap.values()),
+          items: newItems
+      });
+      setIsImportModalOpen(true);
+  };
+
+  const confirmImport = () => {
+      if (importPreview) {
+          onUpdateIrps([...importPreview.irps, ...irps]);
+          setAllIrpItems([...allIrpItems, ...importPreview.items]);
+          setImportPreview(null);
+          setIsImportModalOpen(false);
+          alert('Importação realizada com sucesso!');
+      }
+  };
+
+  // --- CRUD ACTIONS ---
 
   const handleRequestDeleteIrp = (e: React.MouseEvent, irp: IrpCabecalho) => {
       e.stopPropagation();
@@ -216,7 +328,7 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
   };
 
   return (
-    <div className="flex flex-col h-full gap-6 animate-fade-in overflow-y-auto pb-6 relative">
+    <div className="flex flex-col h-full gap-6 animate-fade-in pb-6 relative">
       <div className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-shrink-0 transition-all duration-300 ${selectedIrpId ? 'h-96' : 'h-[550px]'}`}>
         <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
             <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -224,18 +336,42 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
                 Intenção de Registro de Preços
                 <span className="text-xs font-normal text-slate-500 ml-2 bg-slate-200 px-2 py-0.5 rounded-full">{filteredAndSortedIrps.length} registros</span>
             </h3>
-            <button className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm transform active:scale-95" onClick={handleOpenIrpModal}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
-              Nova IRP
-            </button>
+            <div className="flex gap-2">
+                <button 
+                    onClick={handleDownloadModel} 
+                    className="text-slate-500 hover:text-blue-600 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 transition-all hover:bg-blue-50 border border-transparent hover:border-blue-100"
+                    title="Baixar Modelo de Planilha CSV"
+                >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    Modelo
+                </button>
+                <button 
+                    onClick={() => fileInputRef.current?.click()} 
+                    className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm"
+                >
+                    <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    Importar Planilha
+                </button>
+                <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileUpload} 
+                    accept=".csv" 
+                    className="hidden" 
+                />
+                <button className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm transform active:scale-95" onClick={handleOpenIrpModal}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                  Nova IRP
+                </button>
+            </div>
         </div>
 
         <div className="px-4 py-3 bg-white border-b border-slate-100 flex flex-col md:flex-row gap-3 items-center justify-between">
             <div className="relative w-full md:w-1/3">
-                <input type="text" placeholder="Buscar por Nº IRP ou Objeto..." className="pl-3 pr-3 py-1.5 w-full text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                <input type="text" placeholder="Buscar por Nº IRP ou Objeto..." className="pl-3 pr-3 py-1.5 w-full text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             </div>
             <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-                <select className="px-3 py-1.5 text-sm border border-slate-300 rounded-md" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                <select className="px-3 py-1.5 text-sm border border-slate-300 rounded-md bg-white text-slate-700" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                     <option value="">Situação: Todas</option>
                     {Object.values(SituacaoIRP).map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
@@ -244,38 +380,38 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
 
         <div className="overflow-auto h-full pb-12">
             <table className="w-full text-left text-sm text-slate-600">
-                <thead className="bg-slate-100 text-slate-500 uppercase font-semibold sticky top-0 z-10 shadow-sm">
+                <thead className="bg-slate-100 text-slate-500 uppercase font-semibold sticky top-0 z-10 shadow-sm text-xs">
                     <tr>
-                        <th className="px-6 py-3 cursor-pointer" onClick={() => requestSort('numeroIrp')}>Nº IRP {getSortIcon('numeroIrp')}</th>
-                        <th className="px-6 py-3 cursor-pointer" onClick={() => requestSort('objeto')}>Objeto {getSortIcon('objeto')}</th>
-                        <th className="px-6 py-3 cursor-pointer" onClick={() => requestSort('situacao')}>Situação {getSortIcon('situacao')}</th>
-                        <th className="px-6 py-3">Origem</th>
-                        <th className="px-6 py-3 cursor-pointer" onClick={() => requestSort('dataLimite')}>Data Limite {getSortIcon('dataLimite')}</th>
-                        <th className="px-6 py-3">Proc. Participante</th>
-                        <th className="px-6 py-3 text-center">Ações</th>
-                        <th className="px-6 py-3 text-center">Detalhes</th>
+                        <th className="px-4 py-3 cursor-pointer" onClick={() => requestSort('numeroIrp')}>Nº IRP {getSortIcon('numeroIrp')}</th>
+                        <th className="px-4 py-3 cursor-pointer" onClick={() => requestSort('objeto')}>Objeto {getSortIcon('objeto')}</th>
+                        <th className="px-4 py-3 cursor-pointer" onClick={() => requestSort('situacao')}>Situação {getSortIcon('situacao')}</th>
+                        <th className="px-4 py-3">Origem</th>
+                        <th className="px-4 py-3 cursor-pointer" onClick={() => requestSort('dataLimite')}>Data Limite {getSortIcon('dataLimite')}</th>
+                        <th className="px-4 py-3">Proc. Participante</th>
+                        <th className="px-4 py-3 text-center">Ações</th>
+                        <th className="px-4 py-3 text-center">Detalhes</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                     {filteredAndSortedIrps.map((irp) => (
                         <tr key={irp.id} onClick={() => setSelectedIrpId(selectedIrpId === irp.id ? null : irp.id)} className={`cursor-pointer transition-colors hover:bg-slate-50 ${selectedIrpId === irp.id ? 'bg-blue-50' : ''}`}>
-                            <td className="px-6 py-4 font-medium text-slate-900">{irp.numeroIrp}</td>
-                            <td className="px-6 py-4 truncate max-w-xs" title={irp.objeto}>{irp.objeto}</td>
-                            <td className="px-6 py-4"><span className={`px-2 py-1 rounded-full text-xs font-semibold border ${getSituacaoColor(irp.situacao)}`}>{irp.situacao}</span></td>
-                            <td className="px-6 py-4 text-xs font-mono">{irp.origem}</td>
-                            <td className="px-6 py-4">{new Date(irp.dataLimite).toLocaleDateString('pt-BR')}</td>
-                            <td className="px-6 py-4 text-xs font-mono">{irp.processoParticipante || irp.numeroProcessoSei || '-'}</td>
-                            <td className="px-6 py-4">
+                            <td className="px-4 py-3 font-medium text-slate-900">{irp.numeroIrp}</td>
+                            <td className="px-4 py-3 truncate max-w-xs" title={irp.objeto}>{irp.objeto}</td>
+                            <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${getSituacaoColor(irp.situacao)}`}>{irp.situacao}</span></td>
+                            <td className="px-4 py-3 text-xs font-mono">{irp.origem}</td>
+                            <td className="px-4 py-3">{new Date(irp.dataLimite).toLocaleDateString('pt-BR')}</td>
+                            <td className="px-4 py-3 text-xs font-mono">{irp.processoParticipante || irp.numeroProcessoSei || '-'}</td>
+                            <td className="px-4 py-3">
                                 <div className="flex items-center justify-center gap-2">
-                                    <button onClick={(e) => handleOpenEditModal(e, irp)} className="p-2 text-blue-600 bg-blue-50 border border-blue-100 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm active:scale-90" title="Editar IRP">
+                                    <button onClick={(e) => handleOpenEditModal(e, irp)} className="p-1.5 text-blue-600 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-600 hover:text-white transition-all shadow-sm active:scale-90" title="Editar IRP">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                                     </button>
-                                    <button onClick={(e) => handleRequestDeleteIrp(e, irp)} className="p-2 text-amber-600 bg-amber-50 border border-amber-100 rounded-xl hover:bg-amber-600 hover:text-white transition-all shadow-sm active:scale-90" title="Arquivar IRP">
+                                    <button onClick={(e) => handleRequestDeleteIrp(e, irp)} className="p-1.5 text-amber-600 bg-amber-50 border border-amber-100 rounded-lg hover:bg-amber-600 hover:text-white transition-all shadow-sm active:scale-90" title="Arquivar IRP">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
                                     </button>
                                 </div>
                             </td>
-                            <td className="px-6 py-4 text-blue-600 text-center"><svg className={`w-5 h-5 mx-auto transform transition-transform ${selectedIrpId === irp.id ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg></td>
+                            <td className="px-4 py-3 text-blue-600 text-center"><svg className={`w-5 h-5 mx-auto transform transition-transform ${selectedIrpId === irp.id ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg></td>
                         </tr>
                     ))}
                 </tbody>
@@ -301,7 +437,7 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
             </div>
             <div className="overflow-auto flex-1">
                 <table className="w-full text-left text-sm text-slate-600">
-                    <thead className="bg-slate-100 text-slate-500 uppercase font-semibold sticky top-0">
+                    <thead className="bg-slate-100 text-slate-500 uppercase font-semibold sticky top-0 text-xs">
                         <tr>
                             <th className="px-6 py-3">Cód. Item</th>
                             <th className="px-6 py-3">Descrição</th>
@@ -315,14 +451,14 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
                     <tbody className="divide-y divide-slate-200">
                         {items.map((item) => (
                             <tr key={item.id} className="hover:bg-slate-50">
-                                <td className="px-6 py-4"><div className="flex flex-col"><span className="font-bold text-slate-700 font-mono text-xs">{item.codigoItem}</span><span className="text-[10px] text-slate-400 uppercase tracking-wide">{item.tipoCodigo}</span></div></td>
-                                <td className="px-6 py-4 font-medium">{item.descricao}</td>
-                                <td className="px-6 py-4">{item.unidade}</td>
-                                <td className="px-6 py-4 text-right font-mono">{item.quantidade}</td>
-                                <td className="px-6 py-4 text-right font-mono">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.valorUnitario)}</td>
-                                <td className="px-6 py-4 text-right font-bold text-slate-800 font-mono">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.quantidade * item.valorUnitario)}</td>
-                                <td className="px-6 py-4 text-center">
-                                    <button onClick={(e) => handleRequestDeleteItem(e, item)} className="p-2 text-red-600 bg-red-50 border border-red-100 rounded-xl hover:bg-red-600 hover:text-white transition-all shadow-sm active:scale-90" title="Excluir Item">
+                                <td className="px-6 py-3"><div className="flex flex-col"><span className="font-bold text-slate-700 font-mono text-xs">{item.codigoItem}</span><span className="text-[10px] text-slate-400 uppercase tracking-wide">{item.tipoCodigo}</span></div></td>
+                                <td className="px-6 py-3 font-medium">{item.descricao}</td>
+                                <td className="px-6 py-3">{item.unidade}</td>
+                                <td className="px-6 py-3 text-right font-mono">{item.quantidade}</td>
+                                <td className="px-6 py-3 text-right font-mono">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.valorUnitario)}</td>
+                                <td className="px-6 py-3 text-right font-bold text-slate-800 font-mono">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.quantidade * item.valorUnitario)}</td>
+                                <td className="px-6 py-3 text-center">
+                                    <button onClick={(e) => handleRequestDeleteItem(e, item)} className="p-1.5 text-red-600 bg-red-50 border border-red-100 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm active:scale-90" title="Excluir Item">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                     </button>
                                 </td>
@@ -332,6 +468,54 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
                 </table>
             </div>
         </div>
+      )}
+
+      {/* IMPORT CONFIRMATION MODAL */}
+      {isImportModalOpen && importPreview && (
+          <div className="fixed inset-0 bg-slate-900/70 z-[80] flex items-center justify-center backdrop-blur-sm animate-fade-in">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100">
+                  <div className="bg-slate-50 p-6 border-b border-slate-200">
+                      <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                          <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          Confirmar Importação
+                      </h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                          <p className="text-sm text-blue-800 font-semibold mb-2">Resumo da Leitura do Arquivo:</p>
+                          <ul className="list-disc list-inside text-sm text-slate-600 space-y-1">
+                              <li><strong className="text-slate-800">{importPreview.irps.length}</strong> Novas IRPs identificadas.</li>
+                              <li><strong className="text-slate-800">{importPreview.items.length}</strong> Itens totais vinculados.</li>
+                          </ul>
+                      </div>
+                      <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-lg">
+                          <table className="w-full text-xs text-left">
+                              <thead className="bg-slate-50 font-bold text-slate-500">
+                                  <tr><th className="px-3 py-2">Nº IRP</th><th className="px-3 py-2">Objeto</th></tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                  {importPreview.irps.map(irp => (
+                                      <tr key={irp.id}>
+                                          <td className="px-3 py-2 font-mono text-slate-700">{irp.numeroIrp}</td>
+                                          <td className="px-3 py-2 text-slate-600 truncate max-w-[200px]">{irp.objeto}</td>
+                                      </tr>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
+                      <div className="text-xs text-slate-400 italic text-center mt-2">
+                          * Certifique-se que o arquivo segue o modelo padrão (separado por ponto e vírgula).
+                      </div>
+                  </div>
+                  <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-between gap-3">
+                      <button onClick={handleDownloadModel} className="text-blue-600 text-xs font-bold hover:underline">Baixar Modelo Novamente</button>
+                      <div className="flex gap-2">
+                          <button onClick={() => { setIsImportModalOpen(false); setImportPreview(null); }} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">Cancelar</button>
+                          <button onClick={confirmImport} className="px-4 py-2 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm">Confirmar Importação</button>
+                      </div>
+                  </div>
+              </div>
+          </div>
       )}
 
       {/* MODALS REMAINDER UNCHANGED... */}
@@ -345,18 +529,18 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
                 <form onSubmit={(e) => {e.preventDefault(); handleRequestSave(false)}} className="p-6 space-y-4">
                     <div className="text-xs text-slate-400 mb-2 p-2 bg-slate-100 rounded border border-slate-200 font-mono">ID_IRP (Auto-generated): UNIQUEID()</div>
                     <div className="grid grid-cols-2 gap-4">
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº IRP <span className="text-slate-400 font-normal">(Opcional)</span></label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="ex: 010/2024" value={newIrpData.numeroIrp} onChange={(e) => setNewIrpData({...newIrpData, numeroIrp: e.target.value})} /></div>
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Processo Participante (CBMERJ)</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm" placeholder="SEI-..." value={newIrpData.processoParticipante} onChange={(e) => setNewIrpData({...newIrpData, processoParticipante: e.target.value})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº IRP <span className="text-slate-400 font-normal">(Opcional)</span></label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" placeholder="ex: 010/2024" value={newIrpData.numeroIrp} onChange={(e) => setNewIrpData({...newIrpData, numeroIrp: e.target.value})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Processo Participante (CBMERJ)</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm bg-white text-slate-700" placeholder="SEI-..." value={newIrpData.processoParticipante} onChange={(e) => setNewIrpData({...newIrpData, processoParticipante: e.target.value})} /></div>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Dados do Órgão Gerenciador</label>
                         <div className="grid grid-cols-2 gap-4">
-                            <div><label className="block text-xs font-semibold text-slate-600 mb-1">Nome Órgão / UASG</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Ex: CBMERJ/DGAL ou UASG 925000" value={newIrpData.orgaoGerenciador} onChange={(e) => setNewIrpData({...newIrpData, orgaoGerenciador: e.target.value})} /></div>
-                            <div><label className="block text-xs font-semibold text-slate-600 mb-1">Proc. Gerenciador (Se Houver)</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm" placeholder="SEI (Externo) ou ID" value={newIrpData.processoGerenciador} onChange={(e) => setNewIrpData({...newIrpData, processoGerenciador: e.target.value})} /></div>
+                            <div><label className="block text-xs font-semibold text-slate-600 mb-1">Nome Órgão / UASG</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" placeholder="Ex: CBMERJ/DGAL ou UASG 925000" value={newIrpData.orgaoGerenciador} onChange={(e) => setNewIrpData({...newIrpData, orgaoGerenciador: e.target.value})} /></div>
+                            <div><label className="block text-xs font-semibold text-slate-600 mb-1">Proc. Gerenciador (Se Houver)</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm bg-white text-slate-700" placeholder="SEI (Externo) ou ID" value={newIrpData.processoGerenciador} onChange={(e) => setNewIrpData({...newIrpData, processoGerenciador: e.target.value})} /></div>
                         </div>
                     </div>
-                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Data Abertura <span className="text-red-500">*</span></label><input type="date" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-50" value={newIrpData.dataAbertura} onChange={(e) => setNewIrpData({...newIrpData, dataAbertura: e.target.value})} /></div>
-                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Objeto da Licitação</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-24" placeholder="Descreva o objeto resumido..." value={newIrpData.objeto} onChange={(e) => setNewIrpData({...newIrpData, objeto: e.target.value})} /></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Data Abertura <span className="text-red-500">*</span></label><input type="date" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newIrpData.dataAbertura} onChange={(e) => setNewIrpData({...newIrpData, dataAbertura: e.target.value})} /></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Objeto da Licitação</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-24 bg-white text-slate-700" placeholder="Descreva o objeto resumido..." value={newIrpData.objeto} onChange={(e) => setNewIrpData({...newIrpData, objeto: e.target.value})} /></div>
                     <div className="pt-4 flex justify-between gap-3"><button type="button" onClick={() => setIsIrpModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">Cancelar</button><div className="flex gap-2"><button type="button" onClick={() => handleRequestSave(false)} className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors">Salvar e Sair</button><button type="button" onClick={() => handleRequestSave(true)} className="px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-2">Salvar e Adicionar Itens →</button></div></div>
                 </form>
             </div>
@@ -380,10 +564,10 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
                 <form onSubmit={handleUpdateIrp} className="p-6 space-y-4">
                     <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200"><label className="block text-sm font-bold text-yellow-800 mb-1">Situação / Workflow</label><select className="w-full px-3 py-2 border border-yellow-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:outline-none bg-white font-medium text-slate-700" value={editingIrpData.situacao} onChange={(e) => setEditingIrpData({...editingIrpData, situacao: e.target.value as SituacaoIRP})}>{Object.values(SituacaoIRP).map((status) => (<option key={status} value={status}>{status}</option>))}</select></div>
                     <div className="grid grid-cols-2 gap-4">
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº IRP</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={editingIrpData.numeroIrp} onChange={(e) => setEditingIrpData({...editingIrpData, numeroIrp: e.target.value})} /></div>
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Proc. Participante</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm" value={editingIrpData.processoParticipante || editingIrpData.numeroProcessoSei} onChange={(e) => setEditingIrpData({...editingIrpData, processoParticipante: e.target.value})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Nº IRP</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={editingIrpData.numeroIrp} onChange={(e) => setEditingIrpData({...editingIrpData, numeroIrp: e.target.value})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Proc. Participante</label><input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-sm bg-white text-slate-700" value={editingIrpData.processoParticipante || editingIrpData.numeroProcessoSei} onChange={(e) => setEditingIrpData({...editingIrpData, processoParticipante: e.target.value})} /></div>
                     </div>
-                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Objeto</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-20" value={editingIrpData.objeto} onChange={(e) => setEditingIrpData({...editingIrpData, objeto: e.target.value})} /></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Objeto</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-20 bg-white text-slate-700" value={editingIrpData.objeto} onChange={(e) => setEditingIrpData({...editingIrpData, objeto: e.target.value})} /></div>
                     <div className="pt-4 flex justify-end gap-3"><button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">Cancelar</button><button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-2"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>Salvar Alterações</button></div>
                 </form>
             </div>
@@ -396,14 +580,14 @@ export const IrpModule: React.FC<IrpModuleProps> = ({ irps, onUpdateIrps, items:
                 <div className="bg-slate-50 p-6 border-b border-slate-200 flex justify-between items-center"><h3 className="text-lg font-bold text-slate-800">Novo Item da IRP</h3><button onClick={() => setIsItemModalOpen(false)} className="text-slate-400 hover:text-slate-600"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div>
                 <form onSubmit={(e) => {e.preventDefault(); handleSaveItem(false)}} className="p-6 space-y-4">
                     <div className="grid grid-cols-2 gap-4">
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Tipo de Código</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={newItemData.tipoCodigo} onChange={(e) => setNewItemData({...newItemData, tipoCodigo: e.target.value as TipoCodigo})}>{LISTS.TIPOS_CODIGO.map((tipo) => (<option key={tipo} value={tipo}>{tipo}</option>))}</select></div>
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Código (CATMAT/SIGA)</label><input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono" placeholder="Ex: 45021" value={newItemData.codigoItem} onChange={(e) => setNewItemData({...newItemData, codigoItem: e.target.value})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Tipo de Código</label><select className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newItemData.tipoCodigo} onChange={(e) => setNewItemData({...newItemData, tipoCodigo: e.target.value as TipoCodigo})}>{LISTS.TIPOS_CODIGO.map((tipo) => (<option key={tipo} value={tipo}>{tipo}</option>))}</select></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Código (CATMAT/SIGA)</label><input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono bg-white text-slate-700" placeholder="Ex: 45021" value={newItemData.codigoItem} onChange={(e) => setNewItemData({...newItemData, codigoItem: e.target.value})} /></div>
                     </div>
-                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Descrição Detalhada</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-20" placeholder="Descrição completa do item..." value={newItemData.descricao} onChange={(e) => setNewItemData({...newItemData, descricao: e.target.value})} required /></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1">Descrição Detalhada</label><textarea className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none h-20 bg-white text-slate-700" placeholder="Descrição completa do item..." value={newItemData.descricao} onChange={(e) => setNewItemData({...newItemData, descricao: e.target.value})} required /></div>
                     <div className="grid grid-cols-3 gap-4">
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Unidade</label><input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="UN, CX" value={newItemData.unidade} onChange={(e) => setNewItemData({...newItemData, unidade: e.target.value})} /></div>
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Qtd.</label><input type="number" required min="1" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={newItemData.quantidade} onChange={(e) => setNewItemData({...newItemData, quantidade: Number(e.target.value)})} /></div>
-                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Vl. Unit.</label><input type="number" step="0.01" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" value={newItemData.valorUnitario} onChange={(e) => setNewItemData({...newItemData, valorUnitario: Number(e.target.value)})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Unidade</label><input type="text" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" placeholder="UN, CX" value={newItemData.unidade} onChange={(e) => setNewItemData({...newItemData, unidade: e.target.value})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Qtd.</label><input type="number" required min="1" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newItemData.quantidade} onChange={(e) => setNewItemData({...newItemData, quantidade: Number(e.target.value)})} /></div>
+                        <div><label className="block text-sm font-semibold text-slate-700 mb-1">Vl. Unit.</label><input type="number" step="0.01" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-slate-700" value={newItemData.valorUnitario} onChange={(e) => setNewItemData({...newItemData, valorUnitario: Number(e.target.value)})} /></div>
                     </div>
                     <div className="pt-4 flex justify-between gap-3"><button type="button" onClick={() => setIsItemModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">Cancelar</button><div className="flex gap-2"><button type="button" onClick={() => handleSaveItem(true)} className="px-4 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded-lg transition-colors flex items-center gap-2"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>Salvar e Adicionar Outro</button><button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm">Salvar e Sair</button></div></div>
                 </form>

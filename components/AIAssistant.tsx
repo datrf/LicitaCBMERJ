@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { generateProcurementAssistance } from '../services/geminiService';
 
 interface AIAssistantProps {
-  data?: any; // Represents the full database state injected from App
+  data?: any; 
 }
 
 export const AIAssistant: React.FC<AIAssistantProps> = ({ data }) => {
@@ -12,7 +12,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ data }) => {
   const [loading, setLoading] = useState(false);
   const [selectedYear, setSelectedYear] = useState<number | 'all'>('all');
 
-  // --- CALCULA ANOS DISPONÍVEIS NA BASE ---
   const availableYears = useMemo(() => {
     if (!data) return [];
     const years = new Set<number>();
@@ -26,7 +25,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ data }) => {
     return Array.from(years).sort((a, b) => b - a);
   }, [data]);
 
-  // --- FILTRAGEM DOS DADOS POR ANO ANTES DE ENVIAR PARA IA ---
   const getFilteredData = () => {
     if (!data || selectedYear === 'all') return data;
 
@@ -37,7 +35,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ data }) => {
 
     return {
         processos: data.processos?.filter((p: any) => p.anoPlanejamento === selectedYear),
-        itensProcesso: data.itensProcesso, // Mantemos todos os itens pois o filtro principal é no processo
+        itensProcesso: data.itensProcesso, 
         irps: data.irps?.filter((i: any) => filterByYear(i, 'dataAbertura')),
         atas: data.atas?.filter((a: any) => filterByYear(a, 'dataAssinatura')),
         contratos: data.contratos?.filter((c: any) => filterByYear(c, 'dataInicio')),
@@ -160,7 +158,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ data }) => {
             </div>
         </div>
 
-        {/* SELETOR DE ANO PARA IA */}
         <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-indigo-100 shadow-sm">
             <label className="text-[10px] font-black text-indigo-400 uppercase px-2 tracking-widest">Base de Dados:</label>
             <select 
@@ -179,7 +176,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ data }) => {
           <div>
             <label className="text-sm font-bold text-slate-700 mb-2 block">Pergunta para IA ({selectedYear === 'all' ? 'Base Global' : `Filtro: ${selectedYear}`})</label>
             <textarea
-              className="w-full p-4 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none text-slate-700 text-sm h-40 transition-all shadow-sm"
+              className="w-full p-4 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none text-slate-700 text-sm h-40 transition-all shadow-sm bg-white"
               placeholder="Ex: Qual o valor total contratado neste exercício?"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
