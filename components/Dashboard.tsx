@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { 
-    MOCK_ITENS_ATA, getStatusColor
+    MOCK_ITENS_ATA
 } from '../constants';
 import { StatusProcesso, SituacaoContrato, Processo, ItemProcesso, IrpCabecalho, AtaSrp, Contrato, MovimentoConsumo } from '../types';
 
@@ -225,4 +225,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="lg:col-span-5 bg-white rounded-3xl shadow-sm border border-slate-100 p-0 overflow-hidden flex flex-col min-h-[450px]">
               <div className="p-6 border-b border-slate-50 bg-slate-50/50">
                   <h3 className="text-xs font-black text-slate-800 flex items-center gap-3 uppercase tracking-[0.2em]">
-                    <svg
+                    <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Eficiência de Planejamento
+                  </h3>
+              </div>
+              <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white relative">
+                  <div className="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] opacity-30"></div>
+                  
+                  <div className="relative z-10 text-center space-y-4">
+                      <div className="w-48 h-48 rounded-full border-[20px] border-slate-100 flex items-center justify-center relative shadow-sm">
+                          <div className="absolute inset-0 rounded-full border-[20px] border-blue-500 border-l-transparent border-b-transparent rotate-45 transition-all duration-1000"></div>
+                          <div className="text-center">
+                              <span className="text-4xl font-black text-slate-800 block">
+                                  {totalEstimado > 0 ? Math.round((totalExecutado / totalEstimado) * 100) : 0}%
+                              </span>
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Execução</span>
+                          </div>
+                      </div>
+                      <p className="text-xs text-slate-500 font-semibold max-w-[200px] mx-auto leading-relaxed">
+                          Índice de conversão entre o valor planejado em IRP/DOD e o valor efetivamente em contrato.
+                      </p>
+                  </div>
+              </div>
+          </div>
+      </div>
+    </div>
+  );
+};

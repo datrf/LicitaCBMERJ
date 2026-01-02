@@ -1,7 +1,16 @@
 
 import React, { useState, useMemo, useRef } from 'react';
-import { LISTS, getStatusColor } from '../constants';
+import { LISTS } from '../constants';
 import { StatusProcesso, Processo, ItemProcesso, Modalidade, UnidadeDemandante, TipoCodigo, ClassificacaoProcesso, Contrato, SituacaoContrato, AtaSrp, ItemAta, IrpItem, IrpCabecalho } from '../types';
+
+// Função definida LOCALMENTE para evitar ReferenceError de importação
+const getStatusColor = (status: StatusProcesso) => {
+  const statusStr = String(status);
+  if (statusStr.includes('APONTAM') || statusStr.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
+  if (statusStr.includes('CONTRATO') || statusStr.includes('ATA') || statusStr.includes('CONCLUÍDO') || statusStr.includes('ENTREGUE') || statusStr.includes('HOMOLOGACAO') || statusStr.includes('HOMOLOGAÇÃO')) return 'bg-green-100 text-green-700 border-green-200';
+  if (statusStr.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+  return 'bg-blue-100 text-blue-700 border-blue-200';
+};
 
 interface BiddingModuleProps {
     processes: Processo[];
