@@ -1,16 +1,7 @@
 
 import React, { useState, useMemo, useRef } from 'react';
-import { LISTS } from '../constants';
+import { LISTS, getStatusColor } from '../constants';
 import { StatusProcesso, Processo, ItemProcesso, Modalidade, UnidadeDemandante, TipoCodigo, ClassificacaoProcesso, Contrato, SituacaoContrato, AtaSrp, ItemAta, IrpItem, IrpCabecalho } from '../types';
-
-// Helper definido fora do componente para evitar ReferenceError e garantir acesso global no módulo
-const getStatusColor = (status: StatusProcesso) => {
-  const statusStr = String(status);
-  if (statusStr.includes('APONTAM') || statusStr.includes('CHECK')) return 'bg-red-100 text-red-700 border-red-200';
-  if (statusStr.includes('CONTRATO') || statusStr.includes('ATA') || statusStr.includes('CONCLUÍDO') || statusStr.includes('ENTREGUE') || statusStr.includes('HOMOLOGACAO') || statusStr.includes('HOMOLOGAÇÃO')) return 'bg-green-100 text-green-700 border-green-200';
-  if (statusStr.includes('PRAZO DE ENTREGA')) return 'bg-indigo-100 text-indigo-700 border-indigo-200';
-  return 'bg-blue-100 text-blue-700 border-blue-200';
-};
 
 interface BiddingModuleProps {
     processes: Processo[];
@@ -681,7 +672,7 @@ export const BiddingModule: React.FC<BiddingModuleProps> = ({
         processoSeiId: selectedProcessId, 
         numeroItem: currentItemsCount + 1,
         codigoItem: newItemData.codigoItem || '00000', 
-        tipoCodigo: newItemData.tipoCodigo || TipoCodigo.CATMAT,
+        tipoCodigo: newItemData.tipoCodigo || TipoCodigo.CATMAT, 
         descricao: newItemData.descricao || '', 
         quantidadeEstimada: Number(newItemData.quantidadeEstimada),
         valorUnitarioEstimado: Number(newItemData.valorUnitarioEstimado),
